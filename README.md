@@ -1,40 +1,76 @@
-<img src="assets/header.svg" alt="Marco Sesay, Solutions Engineer, Data & AI at IBM" width="100%">
+# Outbreak Signal Summarizer
 
-I'm a Solutions Engineer on IBM's Data & AI team in New York, covering 500+ accounts across every industry with watsonx, Guardium, DataStax and Confluent. I hit 150% of a $4M quota in 2026. On the side I build the tools I want to exist, mostly LLM apps that make sellers and engineers faster.
+Turns WHO Disease Outbreak News (DON) reports into short, structured briefs for public health decision-makers, and checks every number against the source before it ships.
 
-Find me on [LinkedIn](https://www.linkedin.com/in/YOUR-LINKEDIN) · [Substack](https://YOUR-SUBSTACK.substack.com) · [Email](mailto:YOUR-EMAIL)
+A wrong case count in an outbreak brief is worse than no brief. So the design goal here isn't "summarize well," it's "never state a figure the report doesn't support."
 
-## Things I've built
+## How it works
 
-<a href="https://github.com/marcosesay/IBM-sales-intelligence"><img src="assets/sales-intel.svg" alt="Sales Intelligence" width="100%"></a>
+```
+WHO DON API ──> extract (Claude) ──> grounding checks ──> critic (Claude) ──┐
+                     ^                                                       │
+                     └──────────── one revision with the failures ───────────┘
+```
 
-**[Sales Intelligence](https://github.com/marcosesay/IBM-sales-intelligence)** turns a company name and a contact into a seller-ready pre-meeting briefing: a "Start Here" summary, a "Why IBM Wins" angle, parsed sales plays, and a generated architecture diagram. Generation runs on watsonx (Llama 3.3 70B) with a critic pass, plus a Claude path, grounded by live research and an IBM product reference to cut hallucinated specs. It also ships as an MCP server so Claude can look up products and pull past briefings directly. Live and used by IBM sellers. Built with React, TypeScript, Node/Express, Postgres, Vitest and IBM Code Engine.
+1. **Fetch.** Pulls recent reports from WHO's public DON API (no key needed) and strips them to plain text, section by section. That text is the only thing the model sees.
+2. **Extract.** Claude fills a strict schema via forced tool use: disease, countries, headline, case and death figures, trend, WHO's stated risk levels, response actions, a 3-4 sentence summary, and `gaps` (what the report doesn't say). Every figure and risk level must carry the verbatim sentence it came from.
+3. **Check, deterministically.** No model involved. Quotes are string-matched against the source, each figure's value must appear in its quote, risk levels must appear in the Assessment text, and every number in the headline and summary must exist in the report.
+4. **Critique.** A second Claude pass splits the headline and summary into individual claims and marks each supported or unsupported, flagging rounding, invented detail, misattribution or overstated severity.
+5. **Revise once.** If anything failed, Claude redrafts with the specific failures as feedback. A revision that is worse than the draft is discarded.
 
-<a href="https://github.com/marcosesay/YOUR-DJ-REPO"><img src="assets/dj-library.svg" alt="DJ Library Organizer" width="100%"></a>
+## Eval results
 
-**[DJ Library Organizer](https://github.com/marcosesay/YOUR-DJ-REPO)** clusters a local music library by Camelot key so tracks in a crate mix harmonically, has Claude name the playlists, and exports straight to rekordbox XML and .m3u8. I DJ in New York and built this for my own sets. I wrote about it [on Substack](https://YOUR-SUBSTACK.substack.com). Built with React, Node and the Claude API.
+20 most recent DON reports (May to November 2026, mostly the DRC Bundibugyo Ebola outbreak, plus MERS, Nipah, yellow fever, hantavirus and others). Full per-report output is in [`eval/latest/REPORT.md`](eval/latest/REPORT.md).
 
-<a href="https://github.com/marcosesay/YOUR-OUTBREAK-REPO"><img src="assets/outbreak.svg" alt="Outbreak Signal Summarizer" width="100%"></a>
-
-**[Outbreak Signal Summarizer](https://github.com/marcosesay/YOUR-OUTBREAK-REPO)** reads WHO outbreak reports and uses Claude to turn them into short, structured signals. It pulls on my public health degree and my time working on medical records compliance at Datavant. In progress.
-
-## More work
-
-| Project | What it is | Tools |
-|---|---|---|
-| [LLM Evaluation Framework](https://github.com/marcosesay/YOUR-EVAL-REPO) | ONE LINE ON WHAT IT EVALUATES AND HOW | Python |
-| Apollo 11 Query Tool | RAG over 400+ Apollo 11 documents, deployed on Red Hat OpenShift (contributor) | Python, Chroma, OpenAI, OpenShift |
-| Guardium cryptography demo | Custom demo for an embedded solution deal that closed at $800K | IBM Guardium |
-
-## What I work with
-
-| Area | Tools |
+| Metric | Final |
 |---|---|
-| Data & AI | watsonx.ai, watsonx.data, watsonx.governance, DataStage, DataStax, Confluent |
-| Data security | IBM Guardium, data governance, HIPAA-compliant deployments |
-| AI engineering | RAG, evals, MCP, agents, Claude API, watsonx |
-| Cloud | IBM Code Engine, Red Hat OpenShift, Docker, Postgres |
-| Languages | Python, TypeScript, SQL, Java, R |
-| GTM | Salesforce, SalesLoft, SQL analytics |
+| Reports clean (all checks + critic pass) | 20/20 |
+| Figure quotes verbatim in source | 212/212 |
+| Figure values grounded | 212/212 |
+| WHO risk levels grounded | 64/64 |
+| Numbers in headline/summary found in source | 178/178 |
+| Claims supported (critic) | 260/260 |
 
-**Certifications:** 30+ IBM certifications including the watsonx suite · PMI Certified Associate in Project Management (CAPM)
+8 of 20 drafts were sent back for revision. Example: a draft for DON608 said contact follow-up was "about 70%" in Ituri and North Kivu. That figure isn't in the report, the prose check caught it, and the revised brief dropped it.
+
+**What these numbers don't prove.** The automated layers check that output is *grounded*, not that it's the *right* summary (for example, that it picked the most important figure). That's what the human review layer is for: `eval/latest/review_sheet.csv` lists every figure, risk level and claim with its evidence, for a person to mark correct or incorrect. Human review of this run is in progress, and `score-review` also reports how often the automated checks agreed with the reviewer.
+
+## Run it
+
+```bash
+pip install -r requirements.txt
+export ANTHROPIC_API_KEY=...
+
+python -m osm fetch -n 20          # cache recent reports to data/reports/
+python -m osm summarize            # brief the most recent report
+python -m osm summarize 2026-DON622
+python -m osm eval -n 20           # full eval, writes eval/latest/
+python -m osm rescore              # re-run deterministic checks on saved results, no API calls
+python -m osm score-review         # score a filled-in review sheet
+
+streamlit run app.py               # viewer: summarize live or browse eval results
+```
+
+Model defaults to `claude-sonnet-5-5`. Override with `OSM_MODEL`, and set `OSM_CRITIC_MODEL` to use a different model for the fact-check pass.
+
+Tests run offline against a synthetic report and a fake client: `pytest`.
+
+## Layout
+
+```
+osm/fetch.py      WHO API client and HTML cleanup
+osm/schema.py     the outbreak signal schema (Pydantic, used as the tool schema)
+osm/llm.py        extraction and critic prompts
+osm/verify.py     deterministic grounding checks
+osm/pipeline.py   extract, check, revise once
+osm/evaluate.py   eval runner, metrics, review sheet, report
+app.py            Streamlit viewer
+```
+
+## Limits
+
+- Summaries cover one report at a time. There's no tracking of an outbreak across successive reports yet.
+- English DON reports only.
+- Grounding checks catch invented or altered numbers. They can't catch a correct number from the report applied to the wrong place in prose; that falls to the critic and human review.
+
+Built by [Marco Sesay](https://github.com/marcosesay). Source data: [WHO Disease Outbreak News](https://www.who.int/emergencies/disease-outbreak-news).
