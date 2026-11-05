@@ -1,0 +1,21 @@
+{
+  "draft": {
+    "reports": 20,
+    "clean_reports": "19/20 (95%)",
+    "figure_quotes_verbatim": "226/226 (100%)",
+    "figure_values_grounded": "226/226 (100%)",
+    "risk_levels_grounded": "65/65 (100%)",
+    "prose_numbers_grounded": "178/179 (99%)",
+    "claims_supported_by_critic": "269/270 (100%)"
+  },
+  "final": {
+    "reports": 20,
+    "clean_reports": "20/20 (100%)",
+    "figure_quotes_verbatim": "212/212 (100%)",
+    "figure_values_grounded": "212/212 (100%)",
+    "risk_levels_grounded": "64/64 (100%)",
+    "prose_numbers_grounded": "178/178 (100%)",
+    "claims_supported_by_critic": "260/260 (100%)"
+  },
+  "revised_reports": 8
+}
